@@ -28,9 +28,6 @@
 
 bool MainThread_Ready();
 
-// Pin the calling thread to the fastest CPU cluster (Android only, no-op elsewhere).
-void PinCurrentThreadToFastCores(const char *tag);
-
 class GraphicsContext;
 struct WindowDesc;
 

@@ -3,14 +3,6 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
-#include <vector>
-
-#if PPSSPP_PLATFORM(ANDROID)
-#include <sched.h>
-#include <unistd.h>
-#include <fstream>
-#include <cstdio>
-#endif
 
 #include "Common/System/System.h"
 #include "Common/System/Request.h"
@@ -44,52 +36,9 @@ bool MainThread_Ready() {
 	return g_inLoop;
 }
 
-void PinCurrentThreadToFastCores(const char *tag) {
-#if PPSSPP_PLATFORM(ANDROID)
-	static std::vector<int> fastCores;
-	static std::once_flag once;
-	std::call_once(once, [] {
-		int n = (int)sysconf(_SC_NPROCESSORS_CONF);
-		if (n <= 0 || n > 32)
-			return;
-		std::vector<long> freqs(n, 0);
-		long maxFreq = 0;
-		for (int i = 0; i < n; i++) {
-			char p[96];
-			snprintf(p, sizeof(p), "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", i);
-			std::ifstream f(p);
-			if ((f >> freqs[i]) && freqs[i] > maxFreq)
-				maxFreq = freqs[i];
-		}
-		if (maxFreq <= 0)
-			return;
-		for (int i = 0; i < n; i++) {
-			if (freqs[i] >= maxFreq * 95 / 100)
-				fastCores.push_back(i);
-		}
-		// All cores equal: pinning gives nothing.
-		if ((int)fastCores.size() == n)
-			fastCores.clear();
-	});
-	if (fastCores.empty())
-		return;
-
-	cpu_set_t set;
-	CPU_ZERO(&set);
-	for (int c : fastCores)
-		CPU_SET(c, &set);
-	if (sched_setaffinity(0, sizeof(set), &set) != 0) {
-		WARN_LOG(Log::System, "Affinity failed for %s", tag);
-	} else {
-		INFO_LOG(Log::System, "Pinned %s to %d fast cores", tag, (int)fastCores.size());
-	}
-#endif
-}
-
 static void EmuThreadFunc(GraphicsContext *graphicsContext, Application *application, std::function<bool (GraphicsContext *)> frame) {
 	INFO_LOG(Log::G3D, "Entering separate emu thread");
 	SetCurrentThreadName("EmuThread");
-	PinCurrentThreadToFastCores("EmuThread");
 
 	g_emuThreadState = EmuThreadState::RUNNING;
 
