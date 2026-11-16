@@ -1144,7 +1144,6 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeRenderer_displayRender(JNIEnv *env,
 	if (!hasSetThreadName) {
 		hasSetThreadName = true;
 		SetCurrentThreadName("AndroidRender");
-		PinCurrentThreadToFastCores("AndroidRender");
 	}
 
 	if (IsVREnabled() && !StartVRRender()) {
