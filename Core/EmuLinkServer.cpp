@@ -11,8 +11,6 @@
 #include "Core/RetroAchievements.h"
 #include "Core/System.h"
 
-#include "ext/rcheevos/include/rc_client.h"
-
 static constexpr int EMULINK_PORT = 55355;
 static constexpr u32 MAX_PAYLOAD = 4096;
 
@@ -109,7 +107,7 @@ void EmuLinkServer::ServerLoop() {
 		// EMLKV2 handshake
 		if (received == 6 && std::memcmp(packet_buffer, "EMLKV2", 6) == 0) {
 			char json[512];
-			std::string discID = g_paramSFO.GetDiscID();
+			std::string discID = g_paramSFO.GetValueString("DISC_ID");
 			snprintf(json, sizeof(json),
 				"{\"emulator\":\"ppsspp\",\"game_id\":\"%s\",\"game_hash\":\"%s\",\"platform\":\"PSP\"}",
 				discID.c_str(), m_gameHash.c_str());
@@ -130,7 +128,7 @@ void EmuLinkServer::ServerLoop() {
 				response[0] = 0x45;
 				response[1] = 0x4C;
 
-				auto lock = Memory::Lock();
+				// Memory::Lock() tidak ada di versi PPSSPP ini; akses langsung tanpa lock.
 
 				for (uint16_t i = 0; i < count; i++) {
 					u32 addr, size;
@@ -171,7 +169,7 @@ void EmuLinkServer::ServerLoop() {
 
 			if (received == 8 && size > 0 && size <= MAX_PAYLOAD) {
 				// READ request
-				auto lock = Memory::Lock();
+				// Memory::Lock() tidak ada di versi PPSSPP ini; akses langsung tanpa lock.
 				if (Memory::IsValidRange(address, size)) {
 					Memory::MemcpyUnchecked(memory_buffer, address, size);
 					sendto(m_socket, (const char *)memory_buffer, size, 0,
@@ -183,14 +181,10 @@ void EmuLinkServer::ServerLoop() {
 				u32 write_size = std::min(size, data_len);
 				if (write_size > MAX_PAYLOAD)
 					write_size = MAX_PAYLOAD;
-				auto lock = Memory::Lock();
-				if (write_size > 0 && Memory::IsValidRange(address, write_size)) {
+				// Memory::Lock() tidak ada di versi PPSSPP ini; akses langsung tanpa lock.
+				// Tulis ditolak selama mode hardcore RetroAchievements aktif.
+				if (write_size > 0 && !Achievements::HardcoreModeActive() && Memory::IsValidRange(address, write_size)) {
 					Memory::MemcpyUnchecked(address, packet_buffer + 8, write_size);
-					// RA rules: memory tampering disqualifies hardcore
-					if (Achievements::HardcoreModeActive()) {
-						rc_client_set_hardcore_enabled(Achievements::GetClient(), 0);
-						INFO_LOG(Log::System, "EmuLinkServer: Hardcore mode disabled by memory write.");
-					}
 				}
 			}
 		} else {
