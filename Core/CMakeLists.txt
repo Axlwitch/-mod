@@ -431,6 +431,8 @@ add_library(Core STATIC
 	HLE/KUBridge.cpp
 	HLE/Plugins.h
 	HLE/Plugins.cpp
+	EmuLinkServer.cpp
+	EmuLinkServer.h
 	HLE/ThreadQueueList.h
 	HLE/__sceAudio.cpp
 	HLE/__sceAudio.h

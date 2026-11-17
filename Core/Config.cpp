@@ -1035,6 +1035,7 @@ static const ConfigSetting controlSettings[] = {
 static const std::vector<std::string_view> emptyList;
 
 static const ConfigSetting networkSettings[] = {
+	ConfigSetting("EnableEmuLink", SETTING(g_Config, bEnableEmuLink), true, CfgFlag::DEFAULT),
 	ConfigSetting("EnableWlan", SETTING(g_Config, bEnableWlan), false, CfgFlag::PER_GAME),
 	ConfigSetting("EnableAdhocServer", SETTING(g_Config, bEnableAdhocServer), false, CfgFlag::PER_GAME),
 	ConfigSetting("proAdhocServer", SETTING(g_Config, sProAdhocServer), &DefaultProAdhocServer, CfgFlag::PER_GAME),

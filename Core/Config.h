@@ -594,6 +594,8 @@ public:
 	bool bAllowSavestateWhileConnected;  // Developer option, ini-only. No normal users need this, it's always wrong to save/load state when online.
 	bool bAllowSpeedControlWhileConnected;  // Useful in some games but not recommended.
 
+	bool bEnableEmuLink;
+
 	std::string sAdhocServerListUrl;
 	std::vector<std::string> vCustomAdhocServerList;
 	std::vector<std::string> vCustomAdhocServerListWithRelay;

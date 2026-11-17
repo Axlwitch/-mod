@@ -1,0 +1,200 @@
+#include <algorithm>
+#include <cstring>
+
+#include "Common/Crypto/md5.h"
+#include "Common/Log.h"
+#include "Common/TimeUtil.h"
+#include "Core/EmuLinkServer.h"
+#include "Core/ELF/ParamSFO.h"
+#include "Core/FileSystems/MetaFileSystem.h"
+#include "Core/MemMap.h"
+#include "Core/RetroAchievements.h"
+#include "Core/System.h"
+
+#include "ext/rcheevos/include/rc_client.h"
+
+static constexpr int EMULINK_PORT = 55355;
+static constexpr u32 MAX_PAYLOAD = 4096;
+
+EmuLinkServer &EmuLinkServer::Instance() {
+	static EmuLinkServer instance;
+	return instance;
+}
+
+EmuLinkServer::~EmuLinkServer() {
+	Stop();
+}
+
+bool EmuLinkServer::Start() {
+	if (m_running)
+		return true;
+
+	m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (m_socket == INVALID_SOCKET) {
+		ERROR_LOG(Log::System, "EmuLinkServer: Failed to create socket");
+		return false;
+	}
+
+	int on = 1;
+	setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, (const char *)&on, sizeof(on));
+
+#if PPSSPP_PLATFORM(WINDOWS)
+	unsigned long nonblocking = 1;
+	ioctlsocket(m_socket, FIONBIO, &nonblocking);
+#else
+	fcntl(m_socket, F_SETFL, O_NONBLOCK);
+#endif
+
+	sockaddr_in addr{};
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(EMULINK_PORT);
+	addr.sin_addr.s_addr = INADDR_ANY;
+
+	if (bind(m_socket, (sockaddr *)&addr, sizeof(addr)) < 0) {
+		ERROR_LOG(Log::System, "EmuLinkServer: Failed to bind to port %d", EMULINK_PORT);
+		closesocket(m_socket);
+		m_socket = INVALID_SOCKET;
+		return false;
+	}
+
+	// Hash EBOOT.BIN for EMLKV2 handshake (partial hash — executable only, not full ISO)
+	{
+		std::vector<u8> ebootData;
+		if (pspFileSystem.ReadEntireFile("disc0:/PSP_GAME/SYSDIR/EBOOT.BIN", ebootData, true) >= 0 && !ebootData.empty()) {
+			unsigned char digest[16];
+			ppsspp_md5(ebootData.data(), (int)ebootData.size(), digest);
+			char hex[33];
+			for (int i = 0; i < 16; i++)
+				snprintf(hex + i * 2, 3, "%02x", digest[i]);
+			m_gameHash = hex;
+			INFO_LOG(Log::System, "EmuLinkServer: EBOOT.BIN hash: %s (%zu bytes)", m_gameHash.c_str(), ebootData.size());
+		}
+	}
+
+	m_running = true;
+	m_thread = std::thread(&EmuLinkServer::ServerLoop, this);
+	INFO_LOG(Log::System, "EmuLinkServer: Started on port %d", EMULINK_PORT);
+	return true;
+}
+
+void EmuLinkServer::Stop() {
+	if (!m_running)
+		return;
+
+	m_running = false;
+
+	if (m_socket != INVALID_SOCKET) {
+		closesocket(m_socket);
+		m_socket = INVALID_SOCKET;
+	}
+
+	if (m_thread.joinable())
+		m_thread.join();
+
+	m_gameHash.clear();
+
+	INFO_LOG(Log::System, "EmuLinkServer: Stopped");
+}
+
+void EmuLinkServer::ServerLoop() {
+	u8 packet_buffer[8 + MAX_PAYLOAD];
+	u8 memory_buffer[MAX_PAYLOAD];
+
+	while (m_running) {
+		sockaddr_in sender{};
+		socklen_t senderLen = sizeof(sender);
+		int received = recvfrom(m_socket, (char *)packet_buffer, sizeof(packet_buffer),
+		                        0, (sockaddr *)&sender, &senderLen);
+
+		// EMLKV2 handshake
+		if (received == 6 && std::memcmp(packet_buffer, "EMLKV2", 6) == 0) {
+			char json[512];
+			std::string discID = g_paramSFO.GetDiscID();
+			snprintf(json, sizeof(json),
+				"{\"emulator\":\"ppsspp\",\"game_id\":\"%s\",\"game_hash\":\"%s\",\"platform\":\"PSP\"}",
+				discID.c_str(), m_gameHash.c_str());
+			sendto(m_socket, json, strlen(json), 0, (sockaddr *)&sender, senderLen);
+			INFO_LOG(Log::System, "EmuLinkServer: V2 handshake: %s", json);
+			continue;
+		}
+
+		// Batch read: "EL" magic (0x45, 0x4C) + count + entries
+		if (received >= 4 &&
+		    packet_buffer[0] == 0x45 && packet_buffer[1] == 0x4C) {
+			uint16_t count;
+			std::memcpy(&count, packet_buffer + 2, 2);
+			if (count > 0 && count <= 256 && received >= (int)(4 + count * 8)) {
+				u8 response[65000];
+				int resp_off = 4;
+				uint16_t actual = 0;
+				response[0] = 0x45;
+				response[1] = 0x4C;
+
+				auto lock = Memory::Lock();
+
+				for (uint16_t i = 0; i < count; i++) {
+					u32 addr, size;
+					std::memcpy(&addr, packet_buffer + 4 + i * 8, 4);
+					std::memcpy(&size, packet_buffer + 4 + i * 8 + 4, 4);
+					if (size > MAX_PAYLOAD) size = MAX_PAYLOAD;
+
+					if (Memory::IsValidRange(addr, size) &&
+					    resp_off + 2 + (int)size <= (int)sizeof(response)) {
+						u16 len16 = static_cast<u16>(size);
+						std::memcpy(response + resp_off, &len16, 2);
+						resp_off += 2;
+						Memory::MemcpyUnchecked(response + resp_off, addr, size);
+						resp_off += size;
+						actual++;
+					} else if (resp_off + 2 <= (int)sizeof(response)) {
+						response[resp_off++] = 0;
+						response[resp_off++] = 0;
+						actual++;
+					} else {
+						break;
+					}
+				}
+
+				response[2] = actual & 0xFF;
+				response[3] = (actual >> 8) & 0xFF;
+
+				sendto(m_socket, (const char *)response, resp_off, 0,
+				       (sockaddr *)&sender, senderLen);
+				continue;
+			}
+		}
+
+		if (received >= 8) {
+			u32 address, size;
+			std::memcpy(&address, packet_buffer, 4);
+			std::memcpy(&size, packet_buffer + 4, 4);
+
+			if (received == 8 && size > 0 && size <= MAX_PAYLOAD) {
+				// READ request
+				auto lock = Memory::Lock();
+				if (Memory::IsValidRange(address, size)) {
+					Memory::MemcpyUnchecked(memory_buffer, address, size);
+					sendto(m_socket, (const char *)memory_buffer, size, 0,
+					       (sockaddr *)&sender, senderLen);
+				}
+			} else if (received > 8) {
+				// WRITE request
+				u32 data_len = (u32)(received - 8);
+				u32 write_size = std::min(size, data_len);
+				if (write_size > MAX_PAYLOAD)
+					write_size = MAX_PAYLOAD;
+				auto lock = Memory::Lock();
+				if (write_size > 0 && Memory::IsValidRange(address, write_size)) {
+					Memory::MemcpyUnchecked(address, packet_buffer + 8, write_size);
+					// RA rules: memory tampering disqualifies hardcore
+					if (Achievements::HardcoreModeActive()) {
+						rc_client_set_hardcore_enabled(Achievements::GetClient(), 0);
+						INFO_LOG(Log::System, "EmuLinkServer: Hardcore mode disabled by memory write.");
+					}
+				}
+			}
+		} else {
+			sleep_ms(1, "emulink-poll");
+		}
+	}
+}
