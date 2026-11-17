@@ -77,6 +77,7 @@ using namespace std::placeholders;
 #include "Core/Screenshot.h"
 #include "Core/HLE/__sceAudio.h"
 #include "Core/HW/Display.h"
+#include "Core/EmuLinkServer.h"
 
 #include "UI/BackgroundAudio.h"
 #include "UI/GamepadEmu.h"
@@ -373,6 +374,10 @@ void EmuScreen::bootComplete() {
 	System_Notify(SystemNotification::BOOT_DONE);
 	System_Notify(SystemNotification::DISASSEMBLY);
 
+	if (g_Config.bEnableEmuLink) {
+		EmuLinkServer::Instance().Start();
+	}
+
 	NOTICE_LOG(Log::Boot, "Booted %s...", PSP_CoreParameter().fileToStart.c_str());
 	if (!Achievements::HardcoreModeActive() && !bootIsReset_) {
 		// Don't auto-load savestates in hardcore mode.
@@ -438,6 +443,8 @@ EmuScreen::~EmuScreen() {
 
 	std::string gameID = g_paramSFO.GetValueString("DISC_ID");
 	g_Config.TimeTracker().Stop(gameID);
+
+	EmuLinkServer::Instance().Stop();
 
 	if (bootPending_) {
 		// We probably quit during boot, got blocked in lostdevice, and then didn't end up in update again to call PSP_InitUpdate.

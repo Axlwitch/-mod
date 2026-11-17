@@ -1069,6 +1069,9 @@ void GameSettingsScreen::CreateNetworkingSettings(UI::ViewGroup *networkingSetti
 	auto *dnsServer = networkingSettings->Add(new PopupTextInputChoice(GetRequesterToken(), &g_Config.sInfrastructureDNSServer, n->T("DNS server"), "", 32, screenManager()));
 	dnsServer->SetDisabledPtr(&g_Config.bInfrastructureAutoDNS);
 
+	networkingSettings->Add(new ItemHeader(n->T("EmuLink")));
+	networkingSettings->Add(new CheckBox(&g_Config.bEnableEmuLink, n->T("Enable EmuLink", "Enable EmuLink UDP Memory Server (port 55355)")));
+
 	networkingSettings->Add(new ItemHeader(n->T("UPnP (port-forwarding)")));
 	// Only togglable outside a game - sceNet latches settings like UPnPUseOriginalPort at boot,
 	// and a game that's already mapped its ports wouldn't cope with them disappearing.
