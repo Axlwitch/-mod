@@ -704,6 +704,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/NetInetConstants.cpp \
   $(SRC)/Core/HLE/SocketManager.cpp \
   $(SRC)/Core/HLE/Plugins.cpp \
+  $(SRC)/Core/EmuLinkServer.cpp \
   $(SRC)/Core/HLE/sceAdler.cpp \
   $(SRC)/Core/HLE/sceAtrac.cpp \
   $(SRC)/Core/HLE/AtracCtx.cpp \
